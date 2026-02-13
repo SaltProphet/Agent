@@ -1,0 +1,11 @@
+{
+  "name": "@agent/model-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'model-gateway lint placeholder'",
+    "typecheck": "echo 'model-gateway typecheck placeholder'",
+    "test": "node --test"
+  }
+}

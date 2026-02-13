@@ -1,0 +1,11 @@
+{
+  "name": "@agent/policy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'policy lint placeholder'",
+    "typecheck": "echo 'policy typecheck placeholder'",
+    "test": "node --test"
+  }
+}

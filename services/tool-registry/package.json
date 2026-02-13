@@ -1,0 +1,11 @@
+{
+  "name": "@agent/tool-registry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'tool-registry lint placeholder'",
+    "typecheck": "echo 'tool-registry typecheck placeholder'",
+    "test": "node --test"
+  }
+}

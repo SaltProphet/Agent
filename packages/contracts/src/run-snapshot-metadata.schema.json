@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.local/schemas/run-snapshot-metadata.schema.json",
+  "title": "RunSnapshotMetadata",
+  "type": "object",
+  "required": ["runId", "createdAt", "hashes"],
+  "properties": {
+    "runId": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "hashes": {
+      "type": "object",
+      "required": ["promptConfig", "toolConfig", "modelConfig"],
+      "properties": {
+        "promptConfig": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "toolConfig": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "modelConfig": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "orchestratorVersion": { "type": "string" },
+        "gatewayVersion": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
