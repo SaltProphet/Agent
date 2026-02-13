@@ -32,12 +32,16 @@ class TaskState:
     actions: List[str] = field(default_factory=list)
     tokens_estimate: int = 0
     latency_ms: int = 0
+    completed_at: float | None = None  # timestamp when task completed/failed
 
 
 class BackgroundTaskQueue:
-    def __init__(self, agent_manager: AgentManager, router: ModelRouter) -> None:
+    def __init__(
+        self, agent_manager: AgentManager, router: ModelRouter, max_tasks_per_agent: int = 100
+    ) -> None:
         self._agent_manager = agent_manager
         self._router = router
+        self._max_tasks_per_agent = max_tasks_per_agent
         self._q: queue.Queue[str] = queue.Queue()
         self._tasks: Dict[str, TaskState] = {}
         self._lock = threading.Lock()
@@ -50,6 +54,8 @@ class BackgroundTaskQueue:
         task = TaskState(id=str(uuid4()), agent_id=agent_id, prompt=prompt)
         with self._lock:
             self._tasks[task.id] = task
+            # Cleanup old tasks for this agent to prevent unbounded memory growth
+            self._cleanup_old_tasks(agent_id)
         self._q.put(task.id)
         return task
 
@@ -57,12 +63,48 @@ class BackgroundTaskQueue:
         with self._lock:
             if task_id not in self._tasks:
                 raise KeyError(f"Task {task_id} not found")
-            return self._tasks[task_id]
+            orig = self._tasks[task_id]
+            # Return a snapshot copy so callers cannot observe concurrent mutations
+            return TaskState(
+                id=orig.id,
+                agent_id=orig.agent_id,
+                prompt=orig.prompt,
+                status=orig.status,
+                result=orig.result,
+                error=orig.error,
+                reasoning_steps=list(orig.reasoning_steps),
+                actions=list(orig.actions),
+                tokens_estimate=orig.tokens_estimate,
+                latency_ms=orig.latency_ms,
+                completed_at=orig.completed_at,
+            )
 
     def shutdown(self) -> None:
         self._stop.set()
         self._q.put("__STOP__")
         self._worker.join(timeout=2)
+
+    def _cleanup_old_tasks(self, agent_id: str) -> None:
+        """Remove oldest completed/failed tasks for an agent if limit exceeded. Must be called under lock."""
+        agent_tasks = [(tid, t) for tid, t in self._tasks.items() if t.agent_id == agent_id]
+        if len(agent_tasks) <= self._max_tasks_per_agent:
+            return
+        # Only cleanup completed/failed tasks, keep queued/running tasks
+        completed = [
+            (tid, t) for tid, t in agent_tasks if t.status in (TaskStatus.completed, TaskStatus.failed)
+        ]
+        if not completed:
+            return  # No completed tasks to clean up yet
+        # Calculate how many to remove to bring total under limit
+        to_remove = len(agent_tasks) - self._max_tasks_per_agent
+        if to_remove <= 0:
+            return
+        # Sort by completion timestamp, oldest first
+        # All completed/failed tasks should have completed_at set; if None, treat as a bug
+        completed.sort(key=lambda x: x[1].completed_at if x[1].completed_at is not None else float('inf'))
+        # Remove oldest completed tasks up to the limit
+        for tid, _ in completed[:min(to_remove, len(completed))]:
+            del self._tasks[tid]
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -108,8 +150,10 @@ class BackgroundTaskQueue:
                 task.result = response.output_text
                 task.tokens_estimate = sum(len(m.content.split()) for m in messages)
                 task.latency_ms = elapsed_ms
+                task.completed_at = time.time()
                 task.status = TaskStatus.completed
         except Exception as exc:  # pragma: no cover
             with self._lock:
                 task.error = str(exc)
+                task.completed_at = time.time()
                 task.status = TaskStatus.failed

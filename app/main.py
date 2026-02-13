@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -20,11 +21,23 @@ from app.tool_runtime import UnsafeCodeError, execute_tool
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Agent Creator")
+# Module-level instances that will be initialized in lifespan
 registry = AdapterRegistry()
 router = ModelRouter(registry=registry)
 manager = AgentManager()
-queue = BackgroundTaskQueue(agent_manager=manager, router=router)
+task_queue: BackgroundTaskQueue | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage BackgroundTaskQueue lifecycle to prevent thread leaks."""
+    global task_queue
+    task_queue = BackgroundTaskQueue(agent_manager=manager, router=router)
+    yield
+    task_queue.shutdown()
+
+
+app = FastAPI(title="Local Agent Creator", lifespan=lifespan)
 
 
 @app.get("/")
@@ -66,8 +79,10 @@ def clear_history(agent_id: str):
 
 @app.post("/tasks")
 def enqueue_task(request: QueueTaskRequest):
+    if task_queue is None:
+        raise HTTPException(status_code=503, detail="Task queue not initialized")
     try:
-        task = queue.enqueue(agent_id=request.agent_id, prompt=request.prompt)
+        task = task_queue.enqueue(agent_id=request.agent_id, prompt=request.prompt)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"id": task.id, "status": task.status}
@@ -75,8 +90,10 @@ def enqueue_task(request: QueueTaskRequest):
 
 @app.get("/tasks/{task_id}")
 def get_task(task_id: str):
+    if task_queue is None:
+        raise HTTPException(status_code=503, detail="Task queue not initialized")
     try:
-        task = queue.get_task(task_id)
+        task = task_queue.get_task(task_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
