@@ -1,17 +1,17 @@
-# Architecture Ownership Map
+# Architecture (Bootstrap)
 
-## Feature buckets and ownership
+## Scope delivered
 
-- **Prompt building, chat UX, run controls** → `apps/builder-ui`
-- **Run graph execution, scheduling, retries, resumability** → `services/orchestrator`
-- **Model/provider abstraction, capability negotiation, adapter routing** → `services/model-gateway`
-- **Tool plugin onboarding, schema and version governance** → `services/tool-registry`
-- **Tracing, metrics, usage, cost accounting** → `services/observability`
-- **RBAC, secrets boundaries, egress and policy controls** → `services/policy`
-- **Canonical cross-service contracts and capability model** → `packages/contracts`
+This bootstrap focuses on **model interoperability**:
 
-## Cross-cutting boundaries
+1. Unified request schema (`AgentRequest`)
+2. Capability model (`CapabilitySet`)
+3. Capability negotiation with explicit downgrade actions (`negotiate_capabilities`)
+4. Provider adapter abstraction (`ProviderAdapter`) and initial adapter stubs
 
-- `packages/contracts` is the shared source of truth for payloads and metadata.
-- `services/orchestrator` depends on `services/model-gateway`, `services/tool-registry`, and `services/policy` at runtime.
-- `services/observability` receives event streams from all services.
+## Next milestones
+
+- Add native adapters: OpenAI, Anthropic, Azure, Bedrock, Vertex
+- Persist run snapshots and hashed prompt/tool/model config
+- Build tool-calling loop and runtime graph execution
+- Add policy and secret-management layers
