@@ -34,8 +34,7 @@ async def lifespan(app: FastAPI):
     global task_queue
     task_queue = BackgroundTaskQueue(agent_manager=manager, router=router)
     yield
-    if task_queue:
-        task_queue.shutdown()
+    task_queue.shutdown()
 
 
 app = FastAPI(title="Local Agent Creator", lifespan=lifespan)

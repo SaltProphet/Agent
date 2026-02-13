@@ -93,12 +93,18 @@ class BackgroundTaskQueue:
         completed = [
             (tid, t) for tid, t in agent_tasks if t.status in (TaskStatus.completed, TaskStatus.failed)
         ]
-        if len(completed) > self._max_tasks_per_agent:
-            # Sort by completion timestamp, oldest first
-            completed.sort(key=lambda x: x[1].completed_at or 0)
-            to_remove = len(completed) - self._max_tasks_per_agent
-            for tid, _ in completed[:to_remove]:
-                del self._tasks[tid]
+        if not completed:
+            return  # No completed tasks to clean up yet
+        # Calculate how many to remove to bring total under limit
+        to_remove = len(agent_tasks) - self._max_tasks_per_agent
+        if to_remove <= 0:
+            return
+        # Sort by completion timestamp, oldest first
+        # All completed/failed tasks should have completed_at set; if None, treat as a bug
+        completed.sort(key=lambda x: x[1].completed_at if x[1].completed_at is not None else float('inf'))
+        # Remove oldest completed tasks up to the limit
+        for tid, _ in completed[:min(to_remove, len(completed))]:
+            del self._tasks[tid]
 
     def _run(self) -> None:
         while not self._stop.is_set():
