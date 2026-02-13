@@ -5,27 +5,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Local Agent Builder</title>
   <style>
-    :root { --bg:#ffffff; --fg:#111111; --card:#f2f2f2; }
-    body.dark { --bg:#0f172a; --fg:#e2e8f0; --card:#1e293b; }
-    body { background:var(--bg); color:var(--fg); font-family:Arial,sans-serif; margin:20px; }
-    .card { background:var(--card); padding:12px; border-radius:8px; margin-bottom:12px; }
-    button { padding:6px 10px; margin-right:6px; }
-    pre { white-space:pre-wrap; }
+    :root { --bg:#ffffff; --fg:#111827; --card:#f3f4f6; --accent:#2563eb; }
+    body.dark { --bg:#0b1220; --fg:#e5e7eb; --card:#1f2937; --accent:#60a5fa; }
+    body { background:var(--bg); color:var(--fg); font-family:Inter,Arial,sans-serif; margin:20px; }
+    .card { background:var(--card); padding:12px; border-radius:10px; margin-bottom:12px; }
+    button,select,input { padding:8px 10px; margin-right:6px; margin-top:6px; }
+    button { background:var(--accent); color:white; border:none; border-radius:8px; }
+    pre { white-space:pre-wrap; overflow:auto; max-height:320px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; }
+    .col { flex:1; min-width:320px; }
   </style>
 </head>
 <body>
-  <h1>Local + Background Agent Generator</h1>
+  <h1>Local AI Agent Creator</h1>
   <div class="card">
     <button id="dark">Toggle Dark Mode</button>
-    <button id="make">Create Background Agent</button>
-    <button id="clear">Clear Selected Agent History</button>
+    <select id="agentMode">
+      <option value="local">Local Agent</option>
+      <option value="background">Background Agent</option>
+    </select>
+    <input id="agentName" placeholder="agent name" value="agent-demo"/>
+    <button id="make">Generate Agent</button>
+    <button id="clear">Clear Agent History</button>
   </div>
+
   <div class="card">
-    <strong>Agents</strong>
-    <pre id="agents"></pre>
+    <input id="taskPrompt" placeholder="Task prompt" value="Plan and execute a local autonomous step" style="width:60%"/>
+    <button id="runTask">Run Background Task</button>
+    <button id="refresh">Refresh</button>
   </div>
+
+  <div class="row">
+    <div class="card col">
+      <strong>Agents</strong>
+      <pre id="agents"></pre>
+    </div>
+    <div class="card col">
+      <strong>Latest Task Trace (reasoning + actions)</strong>
+      <pre id="task"></pre>
+    </div>
+  </div>
+
   <script>
     let selectedAgent = null;
+    let latestTask = null;
 
     async function refreshAgents() {
       const data = await fetch('/agents').then(r => r.json());
@@ -33,13 +56,29 @@
       document.getElementById('agents').textContent = JSON.stringify(data, null, 2);
     }
 
+    async function refreshTask() {
+      if (!latestTask) return;
+      const data = await fetch(`/tasks/${latestTask}`).then(r => r.json());
+      document.getElementById('task').textContent = JSON.stringify(data, null, 2);
+    }
+
     document.getElementById('dark').onclick = () => {
       document.body.classList.toggle('dark');
     };
 
     document.getElementById('make').onclick = async () => {
-      const payload = { name: `agent-${Date.now()}`, mode: 'background', system_prompt: 'Autonomous agent' };
-      const created = await fetch('/agents', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(payload) }).then(r => r.json());
+      const payload = {
+        name: document.getElementById('agentName').value || `agent-${Date.now()}`,
+        mode: document.getElementById('agentMode').value,
+        system_prompt: 'You are an autonomous agent capable of reasoning and actions.',
+        provider: 'openai_compatible',
+        model: 'local/default',
+      };
+      const created = await fetch('/agents', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify(payload)
+      }).then(r => r.json());
       selectedAgent = created.id;
       await refreshAgents();
     };
@@ -48,6 +87,23 @@
       if (!selectedAgent) return;
       await fetch(`/agents/${selectedAgent}/history`, { method:'DELETE' });
       alert('History cleared for ' + selectedAgent);
+    };
+
+    document.getElementById('runTask').onclick = async () => {
+      if (!selectedAgent) return alert('Create/select an agent first');
+      const prompt = document.getElementById('taskPrompt').value;
+      const task = await fetch('/tasks', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({agent_id:selectedAgent, prompt})
+      }).then(r => r.json());
+      latestTask = task.id;
+      setTimeout(refreshTask, 400);
+    };
+
+    document.getElementById('refresh').onclick = async () => {
+      await refreshAgents();
+      await refreshTask();
     };
 
     refreshAgents();

@@ -9,6 +9,8 @@ from typing import Dict, List
 from uuid import uuid4
 
 from app.agent_manager import AgentManager
+from app.interoperability import ModelRouter
+from app.models import Capability, ConversationMessage, ModelConfig, UnifiedGenerateRequest
 
 
 class TaskStatus(str, Enum):
@@ -28,11 +30,14 @@ class TaskState:
     error: str | None = None
     reasoning_steps: List[str] = field(default_factory=list)
     actions: List[str] = field(default_factory=list)
+    tokens_estimate: int = 0
+    latency_ms: int = 0
 
 
 class BackgroundTaskQueue:
-    def __init__(self, agent_manager: AgentManager) -> None:
+    def __init__(self, agent_manager: AgentManager, router: ModelRouter) -> None:
         self._agent_manager = agent_manager
+        self._router = router
         self._q: queue.Queue[str] = queue.Queue()
         self._tasks: Dict[str, TaskState] = {}
         self._lock = threading.Lock()
@@ -67,24 +72,42 @@ class BackgroundTaskQueue:
             self._execute(task_id)
 
     def _execute(self, task_id: str) -> None:
+        start = time.perf_counter()
         with self._lock:
             task = self._tasks[task_id]
             task.status = TaskStatus.running
-            task.reasoning_steps.append("Validate prompt and agent state")
-            task.actions.append("Read current conversation history")
+            task.reasoning_steps.append("Load agent definition and conversation context")
+            task.actions.append("fetch_agent")
 
         try:
+            agent = self._agent_manager.get_agent(task.agent_id)
             history = self._agent_manager.get_history(task.agent_id)
-            time.sleep(0.01)
-            response = f"Processed prompt '{task.prompt}' with {len(history)} history messages"
+
+            messages = [ConversationMessage(role="system", content=agent.system_prompt)] + history + [
+                ConversationMessage(role="user", content=task.prompt)
+            ]
+            task.reasoning_steps.append("Negotiate model capabilities and fallback if needed")
+            task.actions.append("capability_negotiation")
+
+            response = self._router.generate(
+                UnifiedGenerateRequest(
+                    model=ModelConfig(provider=agent.provider, model=agent.model),
+                    messages=messages,
+                    require_capabilities=[Capability.streaming, Capability.structured_output],
+                    allow_auto_downgrade=True,
+                )
+            )
 
             self._agent_manager.add_message(task.agent_id, role="user", content=task.prompt)
-            self._agent_manager.add_message(task.agent_id, role="assistant", content=response)
+            self._agent_manager.add_message(task.agent_id, role="assistant", content=response.output_text)
 
+            elapsed_ms = int((time.perf_counter() - start) * 1000)
             with self._lock:
-                task.reasoning_steps.append("Generate response with local/background policy")
-                task.actions.append("Append user and assistant messages")
-                task.result = response
+                task.reasoning_steps.append("Persist assistant output and run trace")
+                task.actions.append("write_conversation")
+                task.result = response.output_text
+                task.tokens_estimate = sum(len(m.content.split()) for m in messages)
+                task.latency_ms = elapsed_ms
                 task.status = TaskStatus.completed
         except Exception as exc:  # pragma: no cover
             with self._lock:

@@ -5,13 +5,15 @@ from threading import Lock
 from typing import Dict, List
 from uuid import uuid4
 
-from app.models import AgentDefinition, AgentMode, ConversationMessage
+from app.models import AgentDefinition, ConversationMessage, CreateAgentRequest
 
 
 @dataclass
 class AgentState:
     definition: AgentDefinition
     conversation: List[ConversationMessage] = field(default_factory=list)
+    scratchpad: list[str] = field(default_factory=list)
+    pinned_facts: dict[str, str] = field(default_factory=dict)
 
 
 class AgentManager:
@@ -19,14 +21,21 @@ class AgentManager:
         self._lock = Lock()
         self._agents: Dict[str, AgentState] = {}
 
-    def create_agent(self, name: str, system_prompt: str, mode: AgentMode, model: str) -> AgentDefinition:
+    def create_agent(self, request: CreateAgentRequest) -> AgentDefinition:
         agent_id = str(uuid4())
         definition = AgentDefinition(
             id=agent_id,
-            name=name,
-            system_prompt=system_prompt,
-            mode=mode,
-            model=model,
+            name=request.name,
+            system_prompt=request.system_prompt,
+            goals=request.goals,
+            constraints=request.constraints,
+            mode=request.mode,
+            model=request.model,
+            provider=request.provider,
+            allowed_tools=request.allowed_tools,
+            network_allowlist=request.network_allowlist,
+            budget_tokens=request.budget_tokens,
+            budget_seconds=request.budget_seconds,
         )
         with self._lock:
             self._agents[agent_id] = AgentState(definition=definition)

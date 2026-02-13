@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -20,8 +21,18 @@ class ToolExecutionResult:
 
 def _validate_python(code: str) -> None:
     tree = ast.parse(code)
-    denied_names = {"__import__", "eval", "exec", "open", "compile", "input"}
-    denied_modules = {"os", "sys", "subprocess", "socket", "pathlib", "shutil"}
+    denied_names = {"__import__", "eval", "exec", "open", "compile", "input", "breakpoint"}
+    denied_modules = {
+        "os",
+        "sys",
+        "subprocess",
+        "socket",
+        "pathlib",
+        "shutil",
+        "http",
+        "urllib",
+        "requests",
+    }
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -35,6 +46,11 @@ def _validate_python(code: str) -> None:
             raise UnsafeCodeError(f"Name blocked: {node.id}")
 
 
+def _safe_env() -> dict[str, str]:
+    allowed = {"PATH": os.environ.get("PATH", "")}
+    return allowed
+
+
 def execute_python(code: str, timeout_seconds: int) -> ToolExecutionResult:
     _validate_python(code)
     with tempfile.TemporaryDirectory(prefix="agent_py_") as temp_dir:
@@ -42,49 +58,43 @@ def execute_python(code: str, timeout_seconds: int) -> ToolExecutionResult:
         script_path.write_text(code, encoding="utf-8")
 
         completed = subprocess.run(
-            ["python3", "-I", str(script_path)],
+            ["python3", "-I", "-B", str(script_path)],
             cwd=temp_dir,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
             check=False,
+            env=_safe_env(),
         )
-        return ToolExecutionResult(
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-            exit_code=completed.returncode,
-        )
+        return ToolExecutionResult(completed.stdout, completed.stderr, completed.returncode)
 
 
 def execute_javascript(code: str, timeout_seconds: int) -> ToolExecutionResult:
     with tempfile.TemporaryDirectory(prefix="agent_js_") as temp_dir:
         script_path = Path(temp_dir) / "script.mjs"
-        # Reduce surface area for accidental host access.
         prelude = """
 const process = undefined;
 const require = undefined;
 const global = undefined;
+const fetch = undefined;
 """
         script_path.write_text(prelude + "\n" + code, encoding="utf-8")
 
         completed = subprocess.run(
-            ["node", str(script_path)],
+            ["node", "--disallow-code-generation-from-strings", str(script_path)],
             cwd=temp_dir,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
             check=False,
+            env=_safe_env(),
         )
-        return ToolExecutionResult(
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-            exit_code=completed.returncode,
-        )
+        return ToolExecutionResult(completed.stdout, completed.stderr, completed.returncode)
 
 
 def execute_tool(language: str, code: str, timeout_seconds: int) -> ToolExecutionResult:
     if language == "python":
-        return execute_python(code=code, timeout_seconds=timeout_seconds)
+        return execute_python(code, timeout_seconds)
     if language == "javascript":
-        return execute_javascript(code=code, timeout_seconds=timeout_seconds)
+        return execute_javascript(code, timeout_seconds)
     raise ValueError(f"Unsupported language: {language}")
