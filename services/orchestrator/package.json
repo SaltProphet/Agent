@@ -1,0 +1,11 @@
+{
+  "name": "@agent/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'orchestrator lint placeholder'",
+    "typecheck": "echo 'orchestrator typecheck placeholder'",
+    "test": "node --test"
+  }
+}
