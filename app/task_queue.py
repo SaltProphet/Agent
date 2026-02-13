@@ -35,9 +35,12 @@ class TaskState:
 
 
 class BackgroundTaskQueue:
-    def __init__(self, agent_manager: AgentManager, router: ModelRouter) -> None:
+    def __init__(
+        self, agent_manager: AgentManager, router: ModelRouter, max_tasks_per_agent: int = 100
+    ) -> None:
         self._agent_manager = agent_manager
         self._router = router
+        self._max_tasks_per_agent = max_tasks_per_agent
         self._q: queue.Queue[str] = queue.Queue()
         self._tasks: Dict[str, TaskState] = {}
         self._lock = threading.Lock()
@@ -50,6 +53,8 @@ class BackgroundTaskQueue:
         task = TaskState(id=str(uuid4()), agent_id=agent_id, prompt=prompt)
         with self._lock:
             self._tasks[task.id] = task
+            # Cleanup old tasks for this agent to prevent unbounded memory growth
+            self._cleanup_old_tasks(agent_id)
         self._q.put(task.id)
         return task
 
@@ -57,12 +62,41 @@ class BackgroundTaskQueue:
         with self._lock:
             if task_id not in self._tasks:
                 raise KeyError(f"Task {task_id} not found")
-            return self._tasks[task_id]
+            orig = self._tasks[task_id]
+            # Return a snapshot copy so callers cannot observe concurrent mutations
+            return TaskState(
+                id=orig.id,
+                agent_id=orig.agent_id,
+                prompt=orig.prompt,
+                status=orig.status,
+                result=orig.result,
+                error=orig.error,
+                reasoning_steps=list(orig.reasoning_steps),
+                actions=list(orig.actions),
+                tokens_estimate=orig.tokens_estimate,
+                latency_ms=orig.latency_ms,
+            )
 
     def shutdown(self) -> None:
         self._stop.set()
         self._q.put("__STOP__")
         self._worker.join(timeout=2)
+
+    def _cleanup_old_tasks(self, agent_id: str) -> None:
+        """Remove oldest completed/failed tasks for an agent if limit exceeded. Must be called under lock."""
+        agent_tasks = [(tid, t) for tid, t in self._tasks.items() if t.agent_id == agent_id]
+        if len(agent_tasks) <= self._max_tasks_per_agent:
+            return
+        # Sort by completion order: completed/failed tasks first, then by status change time (approximate)
+        completed = [
+            (tid, t) for tid, t in agent_tasks if t.status in (TaskStatus.completed, TaskStatus.failed)
+        ]
+        if len(completed) > self._max_tasks_per_agent:
+            # Remove oldest completed tasks
+            completed.sort(key=lambda x: x[1].latency_ms)  # Use latency as proxy for completion time
+            to_remove = len(completed) - self._max_tasks_per_agent
+            for tid, _ in completed[:to_remove]:
+                del self._tasks[tid]
 
     def _run(self) -> None:
         while not self._stop.is_set():
