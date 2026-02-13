@@ -32,6 +32,7 @@ class TaskState:
     actions: List[str] = field(default_factory=list)
     tokens_estimate: int = 0
     latency_ms: int = 0
+    completed_at: float | None = None  # timestamp when task completed/failed
 
 
 class BackgroundTaskQueue:
@@ -75,6 +76,7 @@ class BackgroundTaskQueue:
                 actions=list(orig.actions),
                 tokens_estimate=orig.tokens_estimate,
                 latency_ms=orig.latency_ms,
+                completed_at=orig.completed_at,
             )
 
     def shutdown(self) -> None:
@@ -87,13 +89,13 @@ class BackgroundTaskQueue:
         agent_tasks = [(tid, t) for tid, t in self._tasks.items() if t.agent_id == agent_id]
         if len(agent_tasks) <= self._max_tasks_per_agent:
             return
-        # Sort by completion order: completed/failed tasks first, then by status change time (approximate)
+        # Only cleanup completed/failed tasks, keep queued/running tasks
         completed = [
             (tid, t) for tid, t in agent_tasks if t.status in (TaskStatus.completed, TaskStatus.failed)
         ]
         if len(completed) > self._max_tasks_per_agent:
-            # Remove oldest completed tasks
-            completed.sort(key=lambda x: x[1].latency_ms)  # Use latency as proxy for completion time
+            # Sort by completion timestamp, oldest first
+            completed.sort(key=lambda x: x[1].completed_at or 0)
             to_remove = len(completed) - self._max_tasks_per_agent
             for tid, _ in completed[:to_remove]:
                 del self._tasks[tid]
@@ -142,8 +144,10 @@ class BackgroundTaskQueue:
                 task.result = response.output_text
                 task.tokens_estimate = sum(len(m.content.split()) for m in messages)
                 task.latency_ms = elapsed_ms
+                task.completed_at = time.time()
                 task.status = TaskStatus.completed
         except Exception as exc:  # pragma: no cover
             with self._lock:
                 task.error = str(exc)
+                task.completed_at = time.time()
                 task.status = TaskStatus.failed

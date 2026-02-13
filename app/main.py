@@ -80,6 +80,8 @@ def clear_history(agent_id: str):
 
 @app.post("/tasks")
 def enqueue_task(request: QueueTaskRequest):
+    if task_queue is None:
+        raise HTTPException(status_code=503, detail="Task queue not initialized")
     try:
         task = task_queue.enqueue(agent_id=request.agent_id, prompt=request.prompt)
     except KeyError as exc:
@@ -89,6 +91,8 @@ def enqueue_task(request: QueueTaskRequest):
 
 @app.get("/tasks/{task_id}")
 def get_task(task_id: str):
+    if task_queue is None:
+        raise HTTPException(status_code=503, detail="Task queue not initialized")
     try:
         task = task_queue.get_task(task_id)
     except KeyError as exc:
